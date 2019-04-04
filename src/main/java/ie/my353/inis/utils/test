@@ -1,0 +1,82 @@
+    @ProcessTimeDuration
+    public List<FormattedSend2MqSlotsEntity> getAppsNear(WebClient webClient) {
+        //todo 考虑如何获得 kp 每次获取 还是 直到失效再获取
+//        kAndP.put("k","B04D059FE366017FCDB4AAB8D201EF92");
+//        kAndP.put("p","2696DBE46439F88E4AE3D45B66C7C4B4");
+        if (kAndP.isEmpty() || kpCount.get() >= 15) {
+            /*            log.info("kp start");*/
+            kAndP = kpGetter.urlGetKP();
+            /*            log.info("kp stop");*/
+            kpCount.set(0);
+
+        }
+        /*        log.error("----------------" + kpCount.get() + ":::::" + kAndP);*/
+        kpCount.addAndGet(1);
+
+        List<Map<String, String>> collect = slotsCatAndType
+                .getCtListMap()
+                .stream()
+                .peek(CTMap -> {
+                    CTMap.putAll(kAndP);
+                    if (null != CTMap.get(responseKey)) {
+                        CTMap.remove(responseKey);
+                    }
+                    String block = webClient
+                            .get()
+                            .uri(slotsCatAndType.getNearestUrlStr(), CTMap)
+                            .retrieve()
+                            //todo
+//                            .onStatus(HttpStatus::isError, clientResponse -> )
+                            .bodyToMono(String.class)
+//                            .log()
+                            .filter(respStr -> !respStr.contains("[]") && !respStr.contains("[\"empty\"]") && !respStr.contains("TRUE"))
+                            .block();
+                    /* log.info("getAppsNear " + block);*/
+
+
+                    if (null != block) {
+                        CTMap.put(responseKey, block);
+                    }
+                    System.out.println("aopaop" +CTMap+ block);
+                }).peek(x -> System.out.println("abababab" + x))
+                .filter(ele -> null != ele.get(responseKey))
+                .peek(slt -> {
+                    String[] ct ={slt.get("cat") + " " + slt.get("typ")};
+//                    System.out.println(ct);
+                    System.out.println("slt"+slt);
+
+                    mqSender.catAndtypMQSender(Arrays.asList(ct));
+
+                })
+                .collect(Collectors.toList());
+
+        System.out.println("first collection" + collect);
+
+        return collect.stream().map(slt -> {
+            List<FormattedSend2MqSlotsEntity> formattedSend2MqSlotsEntities = new ArrayList<>();
+            try {
+                formattedSend2MqSlotsEntities = Arrays.stream(objectMapper.readValue(slt.get(responseKey), ReturnedSlotDetailsEntityWrapper.class).getSlots())
+                        .map(eachday -> {
+                            String slotDateFormatted = slotDateFormatConverter(eachday.getTime());
+
+                            return new FormattedSend2MqSlotsEntity(eachday.getId(), new Date(), slt.get("cat"), slt.get("typ"), slotDateFormatted, eachday.getTime());
+
+                        }).collect(Collectors.toList());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return formattedSend2MqSlotsEntities;
+        }).flatMap(List::stream).collect(Collectors.toList());
+
+    }
+
+    /***
+     *
+     * @param time  原始格式 "14 May 2019 - 15:00"
+     * @return 输出格式 14/05/2019
+     */
+    private String slotDateFormatConverter(String time) {
+        String substring = time.substring(0, time.indexOf("-") - 1);
+
+        return LocalDate.parse(substring, DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ENGLISH)).format(DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ENGLISH));
+    }
